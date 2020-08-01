@@ -2,10 +2,14 @@ package io.github.toomanybugs1.QuickFarm;
 
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Iterator;
 import java.util.List;
 
 import org.bukkit.*;
 import org.bukkit.block.data.BlockData;
+import org.bukkit.entity.Item;
+import org.bukkit.event.block.Action;
+import org.bukkit.event.player.PlayerInteractEvent;
 import org.bukkit.inventory.PlayerInventory;
 import org.bukkit.plugin.java.JavaPlugin;
 
@@ -83,31 +87,23 @@ public final class Main extends JavaPlugin implements Listener {
 	}
 
 	@EventHandler
-	public void onBlockBreak(BlockBreakEvent event) {
-		//some events were passing null blocks (specifically when using super breaker in mcmmo)
-		if (event == null)
-			return;
-
+	public void onPlayerClicks(PlayerInteractEvent event) {
 		Player player = event.getPlayer();
+		Action action = event.getAction();
+		ItemStack item = event.getItem();
+		Block block = event.getClickedBlock();
 
-		if (this.enabledPlayers.contains(player.getName()))  // Ensure the player has permission to use this plugin.
-			this.tryAutoReplant(event, player);
+		if (action.equals(Action.RIGHT_CLICK_BLOCK))
+			harvestCrop(player, block);
 	}
 
 	/**
-	 * Attempts to automatically replant a crop from seeds in the player's inventory.
+	 * Attempts harvest a crop
 	 *
-	 * Fails under any of the following conditions:
-	 * <ul>
-	 *     <li>the block broken wasn't a crop</li>
-	 *     <li>the player doesn't have the corresponding seeds in his/her inventory.</li>
-	 * </ul>
-	 *
-	 * @param event The event containing information about the block that was broken
-	 * @param player The player whose inventory will be searched for an auto-plantable seed.
+	 * @param player The player using the right click
+	 * @param block The block about to be harvested
 	 */
-	private void tryAutoReplant(BlockBreakEvent event, Player player) {
-		Block block = event.getBlock();
+	private void harvestCrop(Player player, Block block) {
 		ItemStack seed = this.getPlantableSeed(block);
 		BlockData blockData = block.getBlockData();
 
@@ -115,43 +111,24 @@ public final class Main extends JavaPlugin implements Listener {
 			return;
 
 		Ageable blockAge = (Ageable) block.getBlockData();
-		PlayerInventory playerInventory = player.getInventory();
 
-		if (playerInventory.containsAtLeast(seed, 1)) {
-			event.setCancelled(true);
+		if (blockAge.getAge() != blockAge.getMaximumAge())
+			return;
 
-			// Drop all items that would normally be dropped.
-			Collection<ItemStack> drops = block.getDrops(new ItemStack(Material.IRON_HOE), player);
+		// Drop all items that would normally be dropped.
+		block.breakNaturally(player.getInventory().getItemInMainHand());
 
-			World playerWorld = player.getWorld();
-			Location blockLocation = block.getLocation();
+		// Auto-replant the crop
+		blockAge.setAge(0);
+		block.setBlockData(blockAge);
 
-			for (ItemStack drop : drops)
-				playerWorld.dropItemNaturally(blockLocation, drop);
 
-			// Auto-replant the crop
-			final int previousAge = blockAge.getAge();
-			blockAge.setAge(0);
-			block.setBlockData(blockAge);
-
-			// Update the player's inventory to reflect the use of the seed during auto-replanting.
-			final int stackSlot = playerInventory.first(seed.getType());
-			ItemStack seedStack = playerInventory.getItem(stackSlot);
-			
-
-			final int newSeedAmount = seedStack.getAmount() - 1;
-			seedStack.setAmount(newSeedAmount);
-
-			playerInventory.setItem(stackSlot, newSeedAmount > 0 ?
-				seedStack : null
-			);
-
-			// mcmmo should only reward xp if the crop is fully grown
-			if (this.mcmmo != null && previousAge == blockAge.getMaximumAge()) {
-				McMMOPlayer mcPlayer = UserManager.getPlayer(player);
-				ExperienceAPI.addXpFromBlockBySkill(block.getState(), mcPlayer, PrimarySkillType.HERBALISM);
-			}
+		// reward mcmmo xp
+		if (this.mcmmo != null) {
+			McMMOPlayer mcPlayer = UserManager.getPlayer(player);
+			ExperienceAPI.addXpFromBlockBySkill(block.getState(), mcPlayer, PrimarySkillType.HERBALISM);
 		}
+
 
 	}
 
